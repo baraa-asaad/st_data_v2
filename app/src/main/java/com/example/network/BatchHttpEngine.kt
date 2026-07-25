@@ -79,7 +79,9 @@ object BatchHttpEngine {
             val response: Response = client.newCall(request).execute()
             val durationMs = System.currentTimeMillis() - startTime
             val statusCode = response.code
-            val bodyString = response.body?.string() ?: ""
+
+            val responseBytes = response.body?.bytes() ?: byteArrayOf()
+            val bodyString = com.example.util.CsvExcelUtils.decodeBytesAutoEncoding(responseBytes)
             val sampleBody = if (bodyString.length > 1200) bodyString.substring(0, 1200) + "..." else bodyString
 
             if (response.isSuccessful) {
@@ -120,29 +122,33 @@ object BatchHttpEngine {
         val resultMap = mutableMapOf<String, String>()
         val fieldsList = expectedFieldsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
+        val cleanHtml = bodyString
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+
         // 1. Try parsing JSON first
         try {
-            if (bodyString.trim().startsWith("{")) {
-                val jsonObj = JSONObject(bodyString)
+            val trimmed = cleanHtml.trim()
+            if (trimmed.startsWith("{")) {
+                val jsonObj = JSONObject(trimmed)
                 fieldsList.forEach { field ->
-                    if (jsonObj.has(field)) {
-                        resultMap[field] = jsonObj.optString(field, "")
-                    } else {
-                        // Check nested fields
-                        val valNested = findInJsonObject(jsonObj, field)
-                        if (valNested != null) {
-                            resultMap[field] = valNested
-                        }
+                    val valNested = findInJsonObject(jsonObj, field)
+                    if (valNested != null && valNested.isNotBlank()) {
+                        resultMap[field] = valNested
                     }
                 }
                 if (resultMap.isNotEmpty()) return resultMap
-            } else if (bodyString.trim().startsWith("[")) {
-                val jsonArr = JSONArray(bodyString)
+            } else if (trimmed.startsWith("[")) {
+                val jsonArr = JSONArray(trimmed)
                 if (jsonArr.length() > 0 && jsonArr.get(0) is JSONObject) {
                     val jsonObj = jsonArr.getJSONObject(0)
                     fieldsList.forEach { field ->
-                        if (jsonObj.has(field)) {
-                            resultMap[field] = jsonObj.optString(field, "")
+                        val valNested = findInJsonObject(jsonObj, field)
+                        if (valNested != null && valNested.isNotBlank()) {
+                            resultMap[field] = valNested
                         }
                     }
                     if (resultMap.isNotEmpty()) return resultMap
@@ -150,22 +156,37 @@ object BatchHttpEngine {
             }
         } catch (ignored: Exception) {}
 
-        // 2. Parse HTML Table / Key-Value text if HTML or plain text response
+        // 2. Parse HTML Table / Key-Value text
         fieldsList.forEach { field ->
-            val value = extractFieldFromHtmlOrText(bodyString, field)
-            if (value != null) {
+            val value = extractFieldFromHtmlOrText(cleanHtml, field)
+            if (value != null && value.isNotBlank()) {
                 resultMap[field] = value
             }
         }
 
-        // Default fallback if no field matched: add body snippet
+        // 3. Auto-detect common Arabic student labels if missing
+        val autoLabels = listOf("اسم الطالب", "الاسم", "النتيجة", "المعدل", "الصف", "المدرسة", "رقم الجلوس")
+        autoLabels.forEach { label ->
+            if (!resultMap.containsKey(label)) {
+                val foundVal = extractFieldFromHtmlOrText(cleanHtml, label)
+                if (foundVal != null && foundVal.isNotBlank()) {
+                    resultMap[label] = foundVal
+                }
+            }
+        }
+
+        // 4. Default fallback if no field matched: add clean text summary
         if (resultMap.isEmpty()) {
-            val cleanText = bodyString.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
-            val summary = if (cleanText.length > 80) cleanText.substring(0, 80) + "..." else cleanText
+            val cleanText = cleanHtml.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
+            val summary = if (cleanText.length > 150) cleanText.substring(0, 150) + "..." else cleanText
             resultMap["الملخص"] = if (summary.isNotBlank()) summary else "تمت الاستجابة بنجاح"
         }
 
         return resultMap
+    }
+
+    private fun String?.isNull_or_blank(): Boolean {
+        return this == null || this.isBlank()
     }
 
     private fun findInJsonObject(jsonObj: JSONObject, key: String): String? {
@@ -186,20 +207,36 @@ object BatchHttpEngine {
 
     private fun extractFieldFromHtmlOrText(html: String, fieldName: String): String? {
         try {
+            val quoted = Pattern.quote(fieldName)
+
             // Pattern 1: <td>Label</td><td>Value</td> or <th>Label</th><td>Value</td>
-            val patternTd = Pattern.compile("(?i)(?:<td>|<th>|<span>|<div>|<label>)\\s*${Pattern.quote(fieldName)}\\s*[:\\?]?\\s*(?:</[^>]+>)*\\s*(?:<td>|<span>|<div>|<td[^>]*>)\\s*([^<]+)\\s*</", Pattern.CASE_INSENSITIVE)
+            val patternTd = Pattern.compile("(?i)(?:<td>|<th>|<span>|<div>|<label>)\\s*${quoted}\\s*[:\\?]?\\s*(?:</[^>]+>)*\\s*(?:<td[^>]*>|<span[^>]*>|<div[^>]*>|<p[^>]*>|<b[^>]*>)\\s*([^<]+)\\s*</", Pattern.CASE_INSENSITIVE)
             val matcherTd = patternTd.matcher(html)
             if (matcherTd.find()) {
-                return matcherTd.group(1)?.trim()
+                val v = matcherTd.group(1)?.trim()
+                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
             }
 
             // Pattern 2: Label: Value in plain text or tags
-            val patternKv = Pattern.compile("(?i)${Pattern.quote(fieldName)}\\s*[:=]\\s*[\"']?([^\"'<>\n\r]+)[\"']?", Pattern.CASE_INSENSITIVE)
+            val patternKv = Pattern.compile("(?i)${quoted}\\s*[:=]\\s*[\"']?([^\"'<>\\n\\r]{1,100})[\"']?", Pattern.CASE_INSENSITIVE)
             val matcherKv = patternKv.matcher(html)
             if (matcherKv.find()) {
-                return matcherKv.group(1)?.trim()
+                val v = matcherKv.group(1)?.trim()
+                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
+            }
+
+            // Pattern 3: Input field with matching name/id/placeholder
+            val patternInput = Pattern.compile("(?i)(?:name|id|placeholder)=[\"']?${quoted}[\"']?[^>]*value=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
+            val matcherInput = patternInput.matcher(html)
+            if (matcherInput.find()) {
+                val v = matcherInput.group(1)?.trim()
+                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
             }
         } catch (ignored: Exception) {}
         return null
+    }
+
+    private fun stripHtmlTags(str: String): String {
+        return str.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim()
     }
 }

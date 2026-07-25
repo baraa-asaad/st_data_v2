@@ -37,6 +37,8 @@ fun ResultsScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, SUCCESS, FAILED
     var selectedRowForDetail by remember { mutableStateOf<TaskRow?>(null) }
+    var showExportOptionsDialog by remember { mutableStateOf(false) }
+    var exportOnlySuccessOption by remember { mutableStateOf(false) }
 
     val task = currentTask
 
@@ -143,7 +145,7 @@ fun ResultsScreen(
                     }
 
                     Button(
-                        onClick = { viewModel.exportResults() },
+                        onClick = { showExportOptionsDialog = true },
                         colors = ButtonDefaults.buttonColors(containerColor = EmeraldSuccess),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -367,6 +369,109 @@ fun ResultsScreen(
             confirmButton = {
                 Button(onClick = { selectedRowForDetail = null }) {
                     Text("إغلاق")
+                }
+            }
+        )
+    }
+
+    // Export Options Dialog Modal
+    if (showExportOptionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showExportOptionsDialog = false },
+            title = {
+                Text(
+                    text = "خيارات تصدير ملف Excel (.xlsx)",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "اختر البيانات التي ترغب في تصديرها لملف الاكسل:",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Surface(
+                        onClick = { exportOnlySuccessOption = false },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (!exportOnlySuccessOption) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            RadioButton(
+                                selected = !exportOnlySuccessOption,
+                                onClick = { exportOnlySuccessOption = false }
+                            )
+                            Column {
+                                Text(
+                                    text = "تصدير كافة البيانات (${rows.size} طالب)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = "يتضمن كافة السجلات (ناجحة + فاشلة) مع تفاصيل الأعمدة والأخطاء.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        onClick = { exportOnlySuccessOption = true },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (exportOnlySuccessOption) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            RadioButton(
+                                selected = exportOnlySuccessOption,
+                                onClick = { exportOnlySuccessOption = true }
+                            )
+                            Column {
+                                Text(
+                                    text = "تصدير الحالات الناجحة فقط ($successCount طالب)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = EmeraldSuccess
+                                )
+                                Text(
+                                    text = "يتضمن فقط الطلاب الذين تم جلب وتفريغ بياناتهم بنجاح من الموقع.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExportOptionsDialog = false
+                        viewModel.exportResults(onlySuccess = exportOnlySuccessOption)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldSuccess)
+                ) {
+                    Text("بدء التصدير الآن", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showExportOptionsDialog = false }) {
+                    Text("إلغاء")
                 }
             }
         )

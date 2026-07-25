@@ -145,7 +145,7 @@ object CsvExcelUtils {
         return parseTextToStructuredData(defaultFileName, rawText)
     }
 
-    private fun decodeBytesAutoEncoding(bytes: ByteArray): String {
+    fun decodeBytesAutoEncoding(bytes: ByteArray): String {
         // Check for BOMs
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
             return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
@@ -160,8 +160,13 @@ object CsvExcelUtils {
         // Try standard UTF-8 first
         val utf8Text = String(bytes, Charsets.UTF_8)
 
-        // If utf8 contains replacement characters (\uFFFD) or looks garbled, try Windows-1256 (standard Arabic Excel charset)
-        if (utf8Text.contains("\uFFFD") || isGarbledArabic(utf8Text)) {
+        // Check if utf8 text contains genuine Arabic characters without mojibake
+        if (containsArabicCharacters(utf8Text) && !isGarbledArabic(utf8Text)) {
+            return utf8Text
+        }
+
+        // If utf8 contains replacement characters or looks garbled, try Windows-1256 (standard Arabic Excel charset)
+        if (utf8Text.contains("\uFFFD") || isGarbledArabic(utf8Text) || !containsArabicCharacters(utf8Text)) {
             try {
                 val win1256Charset = Charset.forName("windows-1256")
                 val winText = String(bytes, win1256Charset)
@@ -187,8 +192,8 @@ object CsvExcelUtils {
     }
 
     private fun isGarbledArabic(text: String): Boolean {
-        val mojibakeCount = text.count { ch -> ch in listOf('Ø', 'Ù', 'Ã', 'Â', 'ï', '½', '¾') }
-        return mojibakeCount > 5
+        val mojibakeCount = text.count { ch -> ch in listOf('Ø', 'Ù', 'Ã', 'Â', 'ï', '½', '¾', 'â', '€', '™') }
+        return mojibakeCount > 0
     }
 
     private fun parseTextToStructuredData(fileName: String, rawText: String): ParsedFileData? {
@@ -287,19 +292,23 @@ object CsvExcelUtils {
                 } catch (ignored: Exception) {}
             }
 
-            // Gather all extracted keys from extractedDataJson
-            val allExtractedKeys = mutableSetOf<String>()
+            // Gather all extracted keys from task fields and extractedDataJson
+            val allExtractedKeys = LinkedHashSet<String>()
+
+            // ALWAYS include configured fields first
+            task.extractionFieldsJson.split(",").forEach { field ->
+                val clean = field.trim()
+                if (clean.isNotBlank()) {
+                    allExtractedKeys.add(clean)
+                }
+            }
+
+            // ADD any additional dynamic keys found across rows
             rows.forEach { row ->
                 try {
                     val json = JSONObject(row.extractedDataJson)
                     json.keys().forEach { key -> allExtractedKeys.add(key) }
                 } catch (ignored: Exception) {}
-            }
-
-            if (allExtractedKeys.isEmpty()) {
-                task.extractionFieldsJson.split(",").forEach { field ->
-                    if (field.isNotBlank()) allExtractedKeys.add(field.trim())
-                }
             }
 
             // Construct Headers

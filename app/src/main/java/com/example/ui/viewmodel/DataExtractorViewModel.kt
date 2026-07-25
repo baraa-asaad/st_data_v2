@@ -205,19 +205,25 @@ class DataExtractorViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
-    fun exportResults() {
+    fun exportResults(onlySuccess: Boolean = false) {
         val task = currentTask.value ?: return
-        val rows = currentTaskRows.value
-        if (rows.isEmpty()) {
-            _userMessage.value = "لا توجد نتائج للتصدير"
+        val allRows = currentTaskRows.value
+        val targetRows = if (onlySuccess) {
+            allRows.filter { it.status == "SUCCESS" }
+        } else {
+            allRows
+        }
+
+        if (targetRows.isEmpty()) {
+            _userMessage.value = if (onlySuccess) "لا توجد حالات ناجحة للتصدير" else "لا توجد نتائج للتصدير"
             return
         }
 
         viewModelScope.launch {
-            val exported = CsvExcelUtils.exportTaskResultsToExcel(getApplication(), task, rows)
+            val exported = CsvExcelUtils.exportTaskResultsToExcel(getApplication(), task, targetRows)
             if (exported != null) {
                 _exportedFile.value = exported
-                _userMessage.value = "تم تصدير ملف Excel (.xlsx) بنجاح: ${exported.name}"
+                _userMessage.value = "تم تصدير ملف Excel (.xlsx) بنجاح (${targetRows.size} طالب): ${exported.name}"
             } else {
                 _userMessage.value = "فشل تصدير ملف Excel"
             }
