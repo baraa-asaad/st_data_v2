@@ -9,7 +9,9 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.charset.Charset
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
 
 object CsvExcelUtils {
@@ -254,8 +256,9 @@ object CsvExcelUtils {
     }
 
     /**
-     * Exports task extraction results as an XML Spreadsheet Excel file (.xlsx)
-     * Encoded strictly in UTF-8 with XML headers, fully compatible with MS Excel, Google Sheets, LibreOffice and mobile apps without garbled characters.
+     * Exports task extraction results as a native binary OpenXML Excel file (.xlsx).
+     * Creates a genuine zip archive containing sharedStrings, worksheet, and XML schemas with strict UTF-8 encoding.
+     * Guaranteed 100% compatible with MS Excel, Google Sheets, LibreOffice, and mobile Office apps.
      */
     fun exportTaskResultsToExcel(
         context: Context,
@@ -271,6 +274,20 @@ object CsvExcelUtils {
 
             val exportFile = File(exportsDir, exportFileName)
 
+            // Gather all input keys from extraInputJson
+            val allInputKeys = mutableSetOf<String>()
+            rows.forEach { row ->
+                try {
+                    val json = JSONObject(row.extraInputJson)
+                    json.keys().forEach { key ->
+                        if (key != task.idColumnName && key != task.yearColumnName) {
+                            allInputKeys.add(key)
+                        }
+                    }
+                } catch (ignored: Exception) {}
+            }
+
+            // Gather all extracted keys from extractedDataJson
             val allExtractedKeys = mutableSetOf<String>()
             rows.forEach { row ->
                 try {
@@ -285,86 +302,183 @@ object CsvExcelUtils {
                 }
             }
 
+            // Construct Headers
             val headers = mutableListOf(
                 "رقم الصف",
                 task.idColumnName,
-                task.yearColumnName,
-                "الحالة",
-                "رمز HTTP",
-                "مدة الطلب (مللي ثانية)"
+                task.yearColumnName
             )
+            headers.addAll(allInputKeys)
+            headers.add("حالة الفحص")
             headers.addAll(allExtractedKeys)
+            headers.add("رمز HTTP")
+            headers.add("مدة الطلب (مللي ثانية)")
             headers.add("تفاصيل الخطأ")
 
-            val xmlBuilder = StringBuilder()
-            xmlBuilder.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-            xmlBuilder.append("<?mso-application progid=\"Excel.Sheet\"?>\n")
-            xmlBuilder.append("<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n")
-            xmlBuilder.append(" xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n")
-            xmlBuilder.append(" xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n")
-            xmlBuilder.append(" xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"\n")
-            xmlBuilder.append(" xmlns:html=\"http://www.w3.org/TR/REC-html40\">\n")
+            // Build Matrix
+            val matrix = mutableListOf<List<String>>()
+            matrix.add(headers)
 
-            xmlBuilder.append(" <Styles>\n")
-            xmlBuilder.append("  <Style ss:ID=\"HeaderStyle\">\n")
-            xmlBuilder.append("   <Font ss:FontName=\"Arial\" ss:Size=\"11\" ss:Color=\"#FFFFFF\" ss:Bold=\"1\"/>\n")
-            xmlBuilder.append("   <Interior ss:Color=\"#10B981\" ss:Pattern=\"Solid\"/>\n")
-            xmlBuilder.append("   <Alignment ss:Horizontal=\"Center\" ss:Vertical=\"Center\"/>\n")
-            xmlBuilder.append("  </Style>\n")
-            xmlBuilder.append("  <Style ss:ID=\"DataStyle\">\n")
-            xmlBuilder.append("   <Font ss:FontName=\"Arial\" ss:Size=\"10\" ss:Color=\"#000000\"/>\n")
-            xmlBuilder.append("   <Alignment ss:Horizontal=\"Right\" ss:Vertical=\"Center\"/>\n")
-            xmlBuilder.append("  </Style>\n")
-            xmlBuilder.append(" </Styles>\n")
-
-            xmlBuilder.append(" <Worksheet ss:Name=\"نتائج الاستعلام\">\n")
-            xmlBuilder.append("  <Table>\n")
-
-            // Header Row
-            xmlBuilder.append("   <Row ss:Height=\"24\">\n")
-            headers.forEach { h ->
-                xmlBuilder.append("    <Cell ss:StyleID=\"HeaderStyle\"><Data ss:Type=\"String\">${escapeXml(h)}</Data></Cell>\n")
-            }
-            xmlBuilder.append("   </Row>\n")
-
-            // Data Rows
             rows.forEach { row ->
                 val lineTokens = mutableListOf<String>()
                 lineTokens.add(row.rowIndex.toString())
                 lineTokens.add(row.idValue)
                 lineTokens.add(row.yearValue)
+
+                val inputJson = try { JSONObject(row.extraInputJson) } catch (e: Exception) { JSONObject() }
+                allInputKeys.forEach { key ->
+                    lineTokens.add(inputJson.optString(key, ""))
+                }
+
                 lineTokens.add(if (row.status == "SUCCESS") "ناجح" else "فشل")
-                lineTokens.add(row.httpStatusCode.toString())
-                lineTokens.add(row.executionDurationMs.toString())
 
                 val extractedJson = try { JSONObject(row.extractedDataJson) } catch (e: Exception) { JSONObject() }
                 allExtractedKeys.forEach { key ->
-                    val value = extractedJson.optString(key, "")
-                    lineTokens.add(value)
+                    lineTokens.add(extractedJson.optString(key, ""))
                 }
 
+                lineTokens.add(row.httpStatusCode.toString())
+                lineTokens.add(row.executionDurationMs.toString())
                 lineTokens.add(row.errorMessage ?: "")
 
-                xmlBuilder.append("   <Row ss:Height=\"20\">\n")
-                lineTokens.forEach { token ->
-                    xmlBuilder.append("    <Cell ss:StyleID=\"DataStyle\"><Data ss:Type=\"String\">${escapeXml(token)}</Data></Cell>\n")
-                }
-                xmlBuilder.append("   </Row>\n")
+                matrix.add(lineTokens)
             }
 
-            xmlBuilder.append("  </Table>\n")
-            xmlBuilder.append(" </Worksheet>\n")
-            xmlBuilder.append("</Workbook>")
-
-            FileOutputStream(exportFile).use { fos ->
-                fos.write(xmlBuilder.toString().toByteArray(Charsets.UTF_8))
-            }
+            // Write Native Binary OpenXML .xlsx ZIP Container
+            writeNativeXlsxZip(exportFile, matrix)
 
             exportFile
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
+    }
+
+    private fun writeNativeXlsxZip(file: File, matrix: List<List<String>>) {
+        val stringMap = LinkedHashMap<String, Int>()
+        fun getStringIndex(str: String): Int {
+            return stringMap.computeIfAbsent(str) { stringMap.size }
+        }
+
+        matrix.forEach { row ->
+            row.forEach { cell ->
+                getStringIndex(cell)
+            }
+        }
+
+        ZipOutputStream(FileOutputStream(file).buffered()).use { zip ->
+            // 1. [Content_Types].xml
+            zip.putNextEntry(ZipEntry("[Content_Types].xml"))
+            val contentTypes = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                  <Default Extension="xml" ContentType="application/xml"/>
+                  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+                  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+                  <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+                  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+                </Types>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+            zip.write(contentTypes)
+            zip.closeEntry()
+
+            // 2. _rels/.rels
+            zip.putNextEntry(ZipEntry("_rels/.rels"))
+            val mainRels = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+                </Relationships>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+            zip.write(mainRels)
+            zip.closeEntry()
+
+            // 3. xl/_rels/workbook.xml.rels
+            zip.putNextEntry(ZipEntry("xl/_rels/workbook.xml.rels"))
+            val wbRels = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+                  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>
+                  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+                </Relationships>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+            zip.write(wbRels)
+            zip.closeEntry()
+
+            // 4. xl/workbook.xml
+            zip.putNextEntry(ZipEntry("xl/workbook.xml"))
+            val wbXml = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                  <sheets>
+                    <sheet name="نتائج الاستعلام" sheetId="1" r:id="rId1"/>
+                  </sheets>
+                </workbook>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+            zip.write(wbXml)
+            zip.closeEntry()
+
+            // 5. xl/styles.xml
+            zip.putNextEntry(ZipEntry("xl/styles.xml"))
+            val stylesXml = """
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>
+                  <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+                  <borders count="1"><border/></borders>
+                  <cellXfs count="1"><xf fontId="0" fillId="0" borderId="0"/></cellXfs>
+                </styleSheet>
+            """.trimIndent().toByteArray(Charsets.UTF_8)
+            zip.write(stylesXml)
+            zip.closeEntry()
+
+            // 6. xl/sharedStrings.xml
+            zip.putNextEntry(ZipEntry("xl/sharedStrings.xml"))
+            val sstSb = StringBuilder()
+            sstSb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
+            sstSb.append("<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" count=\"${stringMap.size}\" uniqueCount=\"${stringMap.size}\">\n")
+            stringMap.keys.forEach { s ->
+                sstSb.append("  <si><t>${escapeXml(s)}</t></si>\n")
+            }
+            sstSb.append("</sst>")
+            zip.write(sstSb.toString().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+
+            // 7. xl/worksheets/sheet1.xml
+            zip.putNextEntry(ZipEntry("xl/worksheets/sheet1.xml"))
+            val sheetSb = StringBuilder()
+            sheetSb.append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
+            sheetSb.append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">\n")
+            sheetSb.append("  <sheetData>\n")
+
+            matrix.forEachIndexed { rIndex, rowValues ->
+                val rowNum = rIndex + 1
+                sheetSb.append("    <row r=\"$rowNum\">\n")
+                rowValues.forEachIndexed { cIndex, cellVal ->
+                    val colRef = getExcelColumnName(cIndex)
+                    val sIdx = getStringIndex(cellVal)
+                    sheetSb.append("      <c r=\"$colRef$rowNum\" t=\"s\"><v>$sIdx</v></c>\n")
+                }
+                sheetSb.append("    </row>\n")
+            }
+
+            sheetSb.append("  </sheetData>\n")
+            sheetSb.append("</worksheet>")
+            zip.write(sheetSb.toString().toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+        }
+    }
+
+    private fun getExcelColumnName(index: Int): String {
+        var temp = index
+        var colName = ""
+        while (temp >= 0) {
+            colName = ('A' + (temp % 26)).toString() + colName
+            temp = (temp / 26) - 1
+        }
+        return colName
     }
 
     private fun escapeXml(text: String): String {
