@@ -74,15 +74,18 @@ class TaskRepository(
     ): Long {
         val taskId = taskDao.insertTask(task)
         val taskRows = rowsData.mapIndexed { index, rowMap ->
-            val idVal = rowMap[task.idColumnName] ?: rowMap.values.firstOrNull() ?: ""
-            val yearVal = rowMap[task.yearColumnName] ?: rowMap.values.elementAtOrNull(1) ?: ""
+            val idVal = extractColumnValue(rowMap, task.idColumnName, 0)
+            val yearVal = extractColumnValue(rowMap, task.yearColumnName, 1)
             
-            val extraJson = JSONObject(rowMap).toString()
+            val cleanRowMap = rowMap.mapKeys { com.example.util.CsvExcelUtils.fixArabicMojibake(it.key).trim() }
+                .mapValues { com.example.util.CsvExcelUtils.fixArabicMojibake(it.value).trim() }
+            val extraJson = JSONObject(cleanRowMap).toString()
+
             TaskRow(
                 taskId = taskId,
                 rowIndex = index + 1,
-                idValue = idVal.trim(),
-                yearValue = yearVal.trim(),
+                idValue = idVal,
+                yearValue = yearVal,
                 extraInputJson = extraJson,
                 status = RowStatus.PENDING.name
             )
@@ -91,6 +94,31 @@ class TaskRepository(
         val updatedTask = task.copy(id = taskId, totalRows = taskRows.size)
         taskDao.updateTask(updatedTask)
         return taskId
+    }
+
+    private fun extractColumnValue(rowMap: Map<String, String>, targetColName: String, fallbackIdx: Int): String {
+        val cleanTarget = com.example.util.CsvExcelUtils.fixArabicMojibake(targetColName).trim()
+        
+        // 1. Exact / normalized match
+        for ((k, v) in rowMap) {
+            val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+            if (cleanK.equals(cleanTarget, ignoreCase = true)) {
+                return com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+            }
+        }
+
+        // 2. Contains match
+        for ((k, v) in rowMap) {
+            val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+            if (cleanK.contains(cleanTarget, ignoreCase = true) || cleanTarget.contains(cleanK, ignoreCase = true)) {
+                return com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+            }
+        }
+
+        // 3. Fallback by index
+        val values = rowMap.values.toList()
+        val rawFallback = values.getOrNull(fallbackIdx) ?: values.firstOrNull() ?: ""
+        return com.example.util.CsvExcelUtils.fixArabicMojibake(rawFallback).trim()
     }
 
     fun getTaskRowsFlow(taskId: Long): Flow<List<TaskRow>> {

@@ -260,7 +260,7 @@ fun ResultsScreen(
 
                             // Input Extra Columns Values
                             extraInputKeys.forEach { key ->
-                                val valStr = inputJson.optString(key, "-")
+                                val valStr = getJsonValueNormalized(inputJson, key)
                                 TableCell(valStr, width = 120.dp)
                             }
 
@@ -274,7 +274,7 @@ fun ResultsScreen(
 
                             // Extracted Web Columns Values
                             extractedKeys.forEach { key ->
-                                val valStr = extractedJson.optString(key, "-")
+                                val valStr = getJsonValueNormalized(extractedJson, key)
                                 TableCell(valStr, width = 135.dp, isBold = valStr != "-")
                             }
 
@@ -480,6 +480,37 @@ fun ResultsScreen(
 
 private fun String?.isNull_or_blank(): Boolean {
     return this == null || this.isBlank()
+}
+
+private fun getJsonValueNormalized(json: JSONObject, targetKey: String): String {
+    if (json.length() == 0) return "-"
+    val cleanTarget = com.example.util.CsvExcelUtils.fixArabicMojibake(targetKey).trim()
+
+    // 1. Exact / normalized match
+    val keys = json.keys()
+    while (keys.hasNext()) {
+        val k = keys.next()
+        val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+        if (cleanK.equals(cleanTarget, ignoreCase = true)) {
+            val rawV = json.optString(k, "")
+            val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(rawV).trim()
+            if (cleanV.isNotBlank() && cleanV != "null") return cleanV
+        }
+    }
+
+    // 2. Contains match
+    val keys2 = json.keys()
+    while (keys2.hasNext()) {
+        val k = keys2.next()
+        val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+        if (cleanK.contains(cleanTarget, ignoreCase = true) || cleanTarget.contains(cleanK, ignoreCase = true)) {
+            val rawV = json.optString(k, "")
+            val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(rawV).trim()
+            if (cleanV.isNotBlank() && cleanV != "null") return cleanV
+        }
+    }
+
+    return "-"
 }
 
 @Composable

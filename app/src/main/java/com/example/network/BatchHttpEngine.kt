@@ -343,6 +343,10 @@ object BatchHttpEngine {
     }
 
     private fun stripHtmlTags(str: String): String {
-        return str.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim()
+        val noScript = str.replace(Regex("(?i)<script[\\s\\S]*?</script>"), " ")
+            .replace(Regex("(?i)<style[\\s\\S]*?</style>"), " ")
+            .replace(Regex("(?i)<!--[\\s\\S]*?-->"), " ")
+        val clean = noScript.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim()
+        return com.example.util.CsvExcelUtils.fixArabicMojibake(clean)
     }
 }
