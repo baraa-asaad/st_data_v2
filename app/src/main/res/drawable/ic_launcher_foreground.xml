@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Central Grid / Database Icon -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M34,30 H74 C77.3,30 80,32.7 80,36 V72 C80,75.3 77.3,78 74,78 H34 C30.7,78 28,75.3 28,72 V36 C28,32.7 30.7,30 34,30 Z M34,36 V44 H74 V36 H34 Z M34,50 V58 H50 V50 H34 Z M56,50 V58 H74 V50 H56 Z M34,64 V72 H50 V64 H34 Z M56,64 V72 H74 V64 H56 Z" />
+    <!-- Accent Lightning/Download Arrow -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M54,20 L62,28 H57 V36 H51 V28 H46 Z" />
+</vector>

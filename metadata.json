@@ -1,0 +1,6 @@
+{
+  "name": "Batch Data Extractor",
+  "description": "تطبيق عام لسحب البيانات من واجهات البرمجة والمواقع عبر ملفات CSV/Excel ومتابعة الأداء وإعادة المحاولة والتصدير.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
