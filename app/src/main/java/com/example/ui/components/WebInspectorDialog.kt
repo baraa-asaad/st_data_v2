@@ -58,9 +58,13 @@ fun WebInspectorDialog(
     var testIdValue by remember { mutableStateOf("900123456") }
     var testYearValue by remember { mutableStateOf("2006") }
 
-    // Interactive picker mode: null, "ID", "YEAR", "SUBMIT"
+    // Interactive picker mode: null, "ID", "YEAR", "SUBMIT", "OUTPUT"
     var pickingMode by remember { mutableStateOf<String?>(null) }
     var pickingBannerMessage by remember { mutableStateOf("") }
+
+    var showOutputFieldConfirmDialog by remember { mutableStateOf(false) }
+    var pickedOutputText by remember { mutableStateOf("") }
+    var newOutputFieldName by remember { mutableStateOf("") }
 
     var extractedFieldsList by remember {
         mutableStateOf(
@@ -68,8 +72,8 @@ fun WebInspectorDialog(
             else mutableListOf("اسم الطالب", "النتيجة", "المعدل", "الصف", "المدرسة")
         )
     }
-    var newFieldInput by remember { mutableStateOf("") }
 
+    var newFieldInput by remember { mutableStateOf("") }
     var webViewInstance by remember { mutableStateOf<WebView?>(null) }
     var activeTab by remember { mutableIntStateOf(0) } // 0: WebView, 1: Field Mapping & Results
 
@@ -102,7 +106,7 @@ fun WebInspectorDialog(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "انقر مباشرة على العناصر في الصفحة لتحديد الخانات بسهولة",
+                                text = "حدّد خيارات الاستعلام والبيانات بالنقر المباشر على الشاشة",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -131,7 +135,7 @@ fun WebInspectorDialog(
                         ) {
                             Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("حفظ واعتماذ", fontWeight = FontWeight.Bold)
+                            Text("حفظ واعتماد", fontWeight = FontWeight.Bold)
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -260,14 +264,14 @@ fun WebInspectorDialog(
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = "تحديد الخانات بالنقر المباشر على الشاشة:",
+                                        text = "اختر نوع النقر لتحديد العناصر من الصفحة:",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
                                     )
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         Button(
                                             onClick = {
@@ -280,11 +284,9 @@ fun WebInspectorDialog(
                                             ),
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                                         ) {
-                                            Icon(imageVector = Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("تحديد الهوية", fontSize = 11.sp)
+                                            Text("الهوية", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
 
                                         Button(
@@ -298,17 +300,15 @@ fun WebInspectorDialog(
                                             ),
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                                         ) {
-                                            Icon(imageVector = Icons.Default.TouchApp, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("تحديد السنة", fontSize = 11.sp)
+                                            Text("السنة", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
 
                                         Button(
                                             onClick = {
                                                 pickingMode = "SUBMIT"
-                                                pickingBannerMessage = "👉 انقر الآن على (زر البحث/الاستعلام) في الصفحة أدناه..."
+                                                pickingBannerMessage = "👉 انقر الآن على (زر البحث/الاستعلام) في الصفحة..."
                                                 enableJsPickerInWebView(webViewInstance, "SUBMIT")
                                             },
                                             colors = ButtonDefaults.buttonColors(
@@ -316,11 +316,27 @@ fun WebInspectorDialog(
                                             ),
                                             modifier = Modifier.weight(1f),
                                             shape = RoundedCornerShape(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
                                         ) {
-                                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("زر الاستعلام", fontSize = 11.sp)
+                                            Text("زر الاستعلام", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                pickingMode = "OUTPUT"
+                                                pickingBannerMessage = "👉 انقر الآن على أي نص/بيان في صفحة النتيجة لاستخراجه..."
+                                                enableJsPickerInWebView(webViewInstance, "OUTPUT")
+                                            },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (pickingMode == "OUTPUT") Color(0xFFD97706) else MaterialTheme.colorScheme.tertiary
+                                            ),
+                                            modifier = Modifier.weight(1.2f),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 6.dp)
+                                        ) {
+                                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text("تحديد مخرج", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
 
@@ -376,6 +392,11 @@ fun WebInspectorDialog(
                                                     }
                                                     "SUBMIT" -> {
                                                         Toast.makeText(context, "تم التقاط زر الاستعلام ($elementName)", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                    "OUTPUT" -> {
+                                                        pickedOutputText = elementName
+                                                        newOutputFieldName = suggestFieldNameFromText(elementName)
+                                                        showOutputFieldConfirmDialog = true
                                                     }
                                                 }
                                                 pickingMode = null
@@ -583,6 +604,77 @@ fun WebInspectorDialog(
             }
         }
     }
+
+    // Dialog to confirm adding picked output data field from WebView result
+    if (showOutputFieldConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showOutputFieldConfirmDialog = false },
+            title = { Text("إضافة حقل مخرج من نتيجة الصفحة") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "النص المنقور من صفحة الموقع:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = pickedOutputText.ifBlank { "عنصر محدد" },
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = newOutputFieldName,
+                        onValueChange = { newOutputFieldName = it },
+                        label = { Text("عنوان حقل البيانات لجدول Excel") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = newOutputFieldName.trim()
+                        if (name.isNotBlank()) {
+                            if (!extractedFieldsList.contains(name)) {
+                                extractedFieldsList = extractedFieldsList.toMutableList().apply { add(name) }
+                            }
+                            Toast.makeText(context, "تمت إضافة حقل: $name", Toast.LENGTH_SHORT).show()
+                        }
+                        showOutputFieldConfirmDialog = false
+                    }
+                ) {
+                    Text("إضافة إلى أعمدة Excel")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOutputFieldConfirmDialog = false }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+}
+
+private fun suggestFieldNameFromText(text: String): String {
+    val clean = text.trim()
+    return when {
+        clean.contains("اسم") || clean.contains("طالب") -> "اسم الطالب"
+        clean.contains("نتيجة") || clean.contains("ناجح") || clean.contains("راسب") -> "النتيجة"
+        clean.contains("معدل") || clean.contains("%") -> "المعدل"
+        clean.contains("صف") || clean.contains("مرحلة") -> "الصف"
+        clean.contains("مدرسة") -> "اسم المدرسة"
+        clean.contains("جلس") || clean.contains("رقم") -> "رقم الجلوس"
+        clean.length in 1..25 -> clean
+        else -> "حقل مخرج جديد"
+    }
 }
 
 private fun enableJsPickerInWebView(webView: WebView?, mode: String) {
@@ -593,14 +685,20 @@ private fun enableJsPickerInWebView(webView: WebView?, mode: String) {
                 e.preventDefault();
                 e.stopPropagation();
                 var el = e.target;
-                var name = el.name || el.id || el.placeholder || el.getAttribute('aria-label') || el.tagName;
+                
+                var pickedVal = '';
+                if (mode === 'OUTPUT') {
+                    pickedVal = (el.innerText || el.textContent || el.value || '').trim();
+                } else {
+                    pickedVal = el.name || el.id || el.placeholder || el.getAttribute('aria-label') || el.tagName;
+                }
                 
                 // Highlight visual effect
                 el.style.border = '4px solid #10B981';
                 el.style.boxShadow = '0 0 12px #10B981';
                 
                 if (window.AndroidInspector) {
-                    window.AndroidInspector.onElementPicked(mode, name);
+                    window.AndroidInspector.onElementPicked(mode, pickedVal);
                 }
                 document.removeEventListener('click', handler, true);
             };

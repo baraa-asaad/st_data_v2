@@ -110,7 +110,7 @@ fun ResultsScreen(
                         )
                         val sourceBase = task.sourceFileName.substringBeforeLast(".")
                         Text(
-                            text = "اسم الملف عند التصدير: ${sourceBase}_نتائج.csv",
+                            text = "اسم الملف عند التصدير: ${sourceBase}_نتائج.xlsx",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                         )
@@ -123,7 +123,7 @@ fun ResultsScreen(
                     ) {
                         Icon(imageVector = Icons.Default.FileDownload, contentDescription = "تصدير")
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("تصدير Excel / CSV", fontWeight = FontWeight.Bold)
+                        Text("تصدير ملف Excel (.xlsx)", fontWeight = FontWeight.Bold)
                     }
                 }
             }

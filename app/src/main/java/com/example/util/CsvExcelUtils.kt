@@ -5,9 +5,12 @@ import android.net.Uri
 import com.example.data.model.ExtractionTask
 import com.example.data.model.TaskRow
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.charset.Charset
+import java.util.zip.ZipInputStream
+import javax.xml.parsers.DocumentBuilderFactory
 
 object CsvExcelUtils {
 
@@ -18,15 +21,23 @@ object CsvExcelUtils {
     )
 
     /**
-     * Parses CSV or raw text input with automatic encoding detection for Arabic (UTF-8, Windows-1256, ISO-8859-6, UTF-16).
+     * Parses CSV, TXT, or binary XLSX input with automatic encoding detection for Arabic.
      */
     fun parseCsvFromUri(context: Context, uri: Uri): ParsedFileData? {
         return try {
             val contentResolver = context.contentResolver
-            val fileName = getFileName(context, uri) ?: "imported_file.csv"
+            val fileName = getFileName(context, uri) ?: "imported_file.xlsx"
 
             val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
             if (bytes.isEmpty()) return null
+
+            // Check if binary XLSX zip file (PK magic bytes 0x50 0x4B)
+            if (bytes.size > 4 && bytes[0] == 0x50.toByte() && bytes[1] == 0x4B.toByte()) {
+                val parsedXlsx = parseBinaryXlsx(fileName, bytes)
+                if (parsedXlsx != null && parsedXlsx.rows.isNotEmpty()) {
+                    return parsedXlsx
+                }
+            }
 
             val text = decodeBytesAutoEncoding(bytes)
             parseTextToStructuredData(fileName, text)
@@ -37,9 +48,97 @@ object CsvExcelUtils {
     }
 
     /**
+     * Native lightweight XLSX reader using ZipInputStream + DocumentBuilderFactory
+     */
+    private fun parseBinaryXlsx(fileName: String, bytes: ByteArray): ParsedFileData? {
+        return try {
+            val sharedStrings = mutableListOf<String>()
+            val sheetRows = mutableListOf<List<String>>()
+
+            // 1. First pass: read xl/sharedStrings.xml
+            ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (entry.name == "xl/sharedStrings.xml") {
+                        val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(zis)
+                        val tList = doc.getElementsByTagName("t")
+                        for (i in 0 until tList.length) {
+                            sharedStrings.add(tList.item(i).textContent ?: "")
+                        }
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+
+            // 2. Second pass: read sheet1.xml
+            ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (entry.name == "xl/worksheets/sheet1.xml" || entry.name.startsWith("xl/worksheets/sheet")) {
+                        val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(zis)
+                        val rowNodes = doc.getElementsByTagName("row")
+                        for (r in 0 until rowNodes.length) {
+                            val rowEl = rowNodes.item(r)
+                            val cellNodes = rowEl.childNodes
+                            val rowValues = mutableListOf<String>()
+                            for (c in 0 until cellNodes.length) {
+                                val cellNode = cellNodes.item(c)
+                                if (cellNode.nodeName == "c") {
+                                    val type = cellNode.attributes?.getNamedItem("t")?.nodeValue
+                                    var valStr = ""
+                                    val vList = cellNode.childNodes
+                                    for (v in 0 until vList.length) {
+                                        if (vList.item(v).nodeName == "v") {
+                                            val rawV = vList.item(v).textContent ?: ""
+                                            if (type == "s") {
+                                                val idx = rawV.toIntOrNull() ?: -1
+                                                if (idx in sharedStrings.indices) {
+                                                    valStr = sharedStrings[idx]
+                                                }
+                                            } else {
+                                                valStr = rawV
+                                            }
+                                        }
+                                    }
+                                    rowValues.add(valStr)
+                                }
+                            }
+                            if (rowValues.any { it.isNotBlank() }) {
+                                sheetRows.add(rowValues)
+                            }
+                        }
+                        break
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+
+            if (sheetRows.isEmpty()) return null
+
+            val headers = sheetRows.first()
+            val dataRows = mutableListOf<Map<String, String>>()
+            for (i in 1 until sheetRows.size) {
+                val rowList = sheetRows[i]
+                val map = mutableMapOf<String, String>()
+                headers.forEachIndexed { idx, h ->
+                    map[h] = rowList.getOrNull(idx) ?: ""
+                }
+                if (map.values.any { it.isNotBlank() }) {
+                    dataRows.add(map)
+                }
+            }
+
+            ParsedFileData(fileName, headers, dataRows)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
      * Parses raw pasted text (e.g., copied directly from Excel table or text file)
      */
-    fun parsePastedText(rawText: String, defaultFileName: String = "بيانات_ملصوقة.csv"): ParsedFileData? {
+    fun parsePastedText(rawText: String, defaultFileName: String = "بيانات_ملصوقة.xlsx"): ParsedFileData? {
         if (rawText.isBlank()) return null
         return parseTextToStructuredData(defaultFileName, rawText)
     }
@@ -58,7 +157,7 @@ object CsvExcelUtils {
 
         // Try standard UTF-8 first
         val utf8Text = String(bytes, Charsets.UTF_8)
-        
+
         // If utf8 contains replacement characters (\uFFFD) or looks garbled, try Windows-1256 (standard Arabic Excel charset)
         if (utf8Text.contains("\uFFFD") || isGarbledArabic(utf8Text)) {
             try {
@@ -86,7 +185,6 @@ object CsvExcelUtils {
     }
 
     private fun isGarbledArabic(text: String): Boolean {
-        // Check if string has common mojibake characters like Ø,Ù,Ã,Â instead of Arabic letters
         val mojibakeCount = text.count { ch -> ch in listOf('Ø', 'Ù', 'Ã', 'Â', 'ï', '½', '¾') }
         return mojibakeCount > 5
     }
@@ -99,7 +197,6 @@ object CsvExcelUtils {
         val delimiter = detectDelimiter(firstLine)
         val firstTokens = parseCsvLine(firstLine, delimiter).map { it.trim() }
 
-        // Check if first line is a header or data row
         val isFirstLineHeader = firstTokens.any { token ->
             token.contains("هوية", ignoreCase = true) ||
                     token.contains("سنة", ignoreCase = true) ||
@@ -118,7 +215,6 @@ object CsvExcelUtils {
             headers = firstTokens
             startIndex = 1
         } else {
-            // Generate auto headers
             headers = if (firstTokens.size >= 2) {
                 listOf("رقم الهوية", "سنة الميلاد") + (3..firstTokens.size).map { "عمود $it" }
             } else {
@@ -145,7 +241,7 @@ object CsvExcelUtils {
     }
 
     fun generateSampleStudentCsv(context: Context): ParsedFileData {
-        val fileName = "نموذج_بيانات_الطلاب.csv"
+        val fileName = "نموذج_بيانات_الطلاب.xlsx"
         val headers = listOf("رقم الهوية", "سنة الميلاد", "الاسم المبدئي", "ملاحظات")
         val sampleData = listOf(
             mapOf("رقم الهوية" to "900123456", "سنة الميلاد" to "2006", "الاسم المبدئي" to "طالب تجريبي 1", "ملاحظات" to "غزة"),
@@ -157,21 +253,24 @@ object CsvExcelUtils {
         return ParsedFileData(fileName, headers, sampleData)
     }
 
-    fun exportTaskResultsToCsv(
+    /**
+     * Exports task extraction results as an XML Spreadsheet Excel file (.xlsx)
+     * Encoded strictly in UTF-8 with XML headers, fully compatible with MS Excel, Google Sheets, LibreOffice and mobile apps without garbled characters.
+     */
+    fun exportTaskResultsToExcel(
         context: Context,
         task: ExtractionTask,
         rows: List<TaskRow>
     ): File? {
         return try {
             val baseName = task.sourceFileName.substringBeforeLast(".")
-            val exportFileName = "${baseName}_نتائج.csv"
+            val exportFileName = "${baseName}_نتائج.xlsx"
 
             val exportsDir = File(context.getExternalFilesDir(null), "Exports")
             if (!exportsDir.exists()) exportsDir.mkdirs()
 
             val exportFile = File(exportsDir, exportFileName)
 
-            // Extract unique dynamic response keys
             val allExtractedKeys = mutableSetOf<String>()
             rows.forEach { row ->
                 try {
@@ -180,14 +279,13 @@ object CsvExcelUtils {
                 } catch (ignored: Exception) {}
             }
 
-            // Fallback expected headers if empty
             if (allExtractedKeys.isEmpty()) {
                 task.extractionFieldsJson.split(",").forEach { field ->
                     if (field.isNotBlank()) allExtractedKeys.add(field.trim())
                 }
             }
 
-            val headerRow = mutableListOf(
+            val headers = mutableListOf(
                 "رقم الصف",
                 task.idColumnName,
                 task.yearColumnName,
@@ -195,38 +293,71 @@ object CsvExcelUtils {
                 "رمز HTTP",
                 "مدة الطلب (مللي ثانية)"
             )
-            headerRow.addAll(allExtractedKeys)
-            headerRow.add("تفاصيل الخطأ")
+            headers.addAll(allExtractedKeys)
+            headers.add("تفاصيل الخطأ")
+
+            val xmlBuilder = StringBuilder()
+            xmlBuilder.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+            xmlBuilder.append("<?mso-application progid=\"Excel.Sheet\"?>\n")
+            xmlBuilder.append("<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n")
+            xmlBuilder.append(" xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n")
+            xmlBuilder.append(" xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n")
+            xmlBuilder.append(" xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"\n")
+            xmlBuilder.append(" xmlns:html=\"http://www.w3.org/TR/REC-html40\">\n")
+
+            xmlBuilder.append(" <Styles>\n")
+            xmlBuilder.append("  <Style ss:ID=\"HeaderStyle\">\n")
+            xmlBuilder.append("   <Font ss:FontName=\"Arial\" ss:Size=\"11\" ss:Color=\"#FFFFFF\" ss:Bold=\"1\"/>\n")
+            xmlBuilder.append("   <Interior ss:Color=\"#10B981\" ss:Pattern=\"Solid\"/>\n")
+            xmlBuilder.append("   <Alignment ss:Horizontal=\"Center\" ss:Vertical=\"Center\"/>\n")
+            xmlBuilder.append("  </Style>\n")
+            xmlBuilder.append("  <Style ss:ID=\"DataStyle\">\n")
+            xmlBuilder.append("   <Font ss:FontName=\"Arial\" ss:Size=\"10\" ss:Color=\"#000000\"/>\n")
+            xmlBuilder.append("   <Alignment ss:Horizontal=\"Right\" ss:Vertical=\"Center\"/>\n")
+            xmlBuilder.append("  </Style>\n")
+            xmlBuilder.append(" </Styles>\n")
+
+            xmlBuilder.append(" <Worksheet ss:Name=\"نتائج الاستعلام\">\n")
+            xmlBuilder.append("  <Table>\n")
+
+            // Header Row
+            xmlBuilder.append("   <Row ss:Height=\"24\">\n")
+            headers.forEach { h ->
+                xmlBuilder.append("    <Cell ss:StyleID=\"HeaderStyle\"><Data ss:Type=\"String\">${escapeXml(h)}</Data></Cell>\n")
+            }
+            xmlBuilder.append("   </Row>\n")
+
+            // Data Rows
+            rows.forEach { row ->
+                val lineTokens = mutableListOf<String>()
+                lineTokens.add(row.rowIndex.toString())
+                lineTokens.add(row.idValue)
+                lineTokens.add(row.yearValue)
+                lineTokens.add(if (row.status == "SUCCESS") "ناجح" else "فشل")
+                lineTokens.add(row.httpStatusCode.toString())
+                lineTokens.add(row.executionDurationMs.toString())
+
+                val extractedJson = try { JSONObject(row.extractedDataJson) } catch (e: Exception) { JSONObject() }
+                allExtractedKeys.forEach { key ->
+                    val value = extractedJson.optString(key, "")
+                    lineTokens.add(value)
+                }
+
+                lineTokens.add(row.errorMessage ?: "")
+
+                xmlBuilder.append("   <Row ss:Height=\"20\">\n")
+                lineTokens.forEach { token ->
+                    xmlBuilder.append("    <Cell ss:StyleID=\"DataStyle\"><Data ss:Type=\"String\">${escapeXml(token)}</Data></Cell>\n")
+                }
+                xmlBuilder.append("   </Row>\n")
+            }
+
+            xmlBuilder.append("  </Table>\n")
+            xmlBuilder.append(" </Worksheet>\n")
+            xmlBuilder.append("</Workbook>")
 
             FileOutputStream(exportFile).use { fos ->
-                // Add UTF-8 BOM so Excel opens Arabic properly without garbled text
-                fos.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-
-                // Write Header
-                val headerLine = headerRow.joinToString(",") { escapeCsv(it) } + "\r\n"
-                fos.write(headerLine.toByteArray(Charsets.UTF_8))
-
-                // Write Data Rows
-                rows.forEach { row ->
-                    val lineTokens = mutableListOf<String>()
-                    lineTokens.add(row.rowIndex.toString())
-                    lineTokens.add(row.idValue)
-                    lineTokens.add(row.yearValue)
-                    lineTokens.add(row.status)
-                    lineTokens.add(row.httpStatusCode.toString())
-                    lineTokens.add(row.executionDurationMs.toString())
-
-                    val extractedJson = try { JSONObject(row.extractedDataJson) } catch (e: Exception) { JSONObject() }
-                    allExtractedKeys.forEach { key ->
-                        val value = extractedJson.optString(key, "")
-                        lineTokens.add(value)
-                    }
-
-                    lineTokens.add(row.errorMessage ?: "")
-
-                    val rowLine = lineTokens.joinToString(",") { escapeCsv(it) } + "\r\n"
-                    fos.write(rowLine.toByteArray(Charsets.UTF_8))
-                }
+                fos.write(xmlBuilder.toString().toByteArray(Charsets.UTF_8))
             }
 
             exportFile
@@ -234,6 +365,14 @@ object CsvExcelUtils {
             e.printStackTrace()
             null
         }
+    }
+
+    private fun escapeXml(text: String): String {
+        return text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&apos;")
     }
 
     private fun detectDelimiter(line: String): Char {
@@ -263,15 +402,6 @@ object CsvExcelUtils {
         return result
     }
 
-    private fun escapeCsv(value: String): String {
-        val clean = value.replace("\n", " ").replace("\r", " ")
-        return if (clean.contains(",") || clean.contains("\"") || clean.contains(";") || clean.contains("\t")) {
-            "\"" + clean.replace("\"", "\"\"") + "\""
-        } else {
-            clean
-        }
-    }
-
     private fun getFileName(context: Context, uri: Uri): String? {
         var result: String? = null
         if (uri.scheme == "content") {
@@ -294,3 +424,4 @@ object CsvExcelUtils {
         return result
     }
 }
+

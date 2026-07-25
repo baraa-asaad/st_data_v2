@@ -214,12 +214,12 @@ class DataExtractorViewModel(application: Application) : AndroidViewModel(applic
         }
 
         viewModelScope.launch {
-            val exported = CsvExcelUtils.exportTaskResultsToCsv(getApplication(), task, rows)
+            val exported = CsvExcelUtils.exportTaskResultsToExcel(getApplication(), task, rows)
             if (exported != null) {
                 _exportedFile.value = exported
-                _userMessage.value = "تم تصدير النتائج بنجاح إلى: ${exported.name}"
+                _userMessage.value = "تم تصدير ملف Excel (.xlsx) بنجاح: ${exported.name}"
             } else {
-                _userMessage.value = "فشل تصدير ملف النتائج"
+                _userMessage.value = "فشل تصدير ملف Excel"
             }
         }
     }
