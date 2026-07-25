@@ -49,6 +49,17 @@ object CsvExcelUtils {
         }
     }
 
+    private fun cellRefToColIndex(ref: String?): Int {
+        if (ref.isNullOrBlank()) return -1
+        val letters = ref.takeWhile { it.isLetter() }.uppercase()
+        if (letters.isEmpty()) return -1
+        var col = 0
+        for (ch in letters) {
+            col = col * 26 + (ch - 'A' + 1)
+        }
+        return col - 1
+    }
+
     /**
      * Native lightweight XLSX reader using ZipInputStream + DocumentBuilderFactory
      */
@@ -63,9 +74,9 @@ object CsvExcelUtils {
                 while (entry != null) {
                     if (entry.name == "xl/sharedStrings.xml") {
                         val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(zis)
-                        val tList = doc.getElementsByTagName("t")
-                        for (i in 0 until tList.length) {
-                            sharedStrings.add(tList.item(i).textContent ?: "")
+                        val siList = doc.getElementsByTagName("si")
+                        for (i in 0 until siList.length) {
+                            sharedStrings.add(siList.item(i).textContent ?: "")
                         }
                     }
                     entry = zis.nextEntry
@@ -82,31 +93,50 @@ object CsvExcelUtils {
                         for (r in 0 until rowNodes.length) {
                             val rowEl = rowNodes.item(r)
                             val cellNodes = rowEl.childNodes
-                            val rowValues = mutableListOf<String>()
+                            val cellMap = mutableMapOf<Int, String>()
+                            var nextCol = 0
+
                             for (c in 0 until cellNodes.length) {
                                 val cellNode = cellNodes.item(c)
                                 if (cellNode.nodeName == "c") {
+                                    val rAttr = cellNode.attributes?.getNamedItem("r")?.nodeValue
+                                    val colIdx = if (rAttr != null) cellRefToColIndex(rAttr) else nextCol
+                                    nextCol = if (colIdx >= 0) colIdx + 1 else nextCol + 1
+
                                     val type = cellNode.attributes?.getNamedItem("t")?.nodeValue
                                     var valStr = ""
-                                    val vList = cellNode.childNodes
-                                    for (v in 0 until vList.length) {
-                                        if (vList.item(v).nodeName == "v") {
-                                            val rawV = vList.item(v).textContent ?: ""
-                                            if (type == "s") {
-                                                val idx = rawV.toIntOrNull() ?: -1
-                                                if (idx in sharedStrings.indices) {
-                                                    valStr = sharedStrings[idx]
+
+                                    if (type == "inlineStr") {
+                                        valStr = cellNode.textContent ?: ""
+                                    } else {
+                                        val vList = cellNode.childNodes
+                                        for (v in 0 until vList.length) {
+                                            val child = vList.item(v)
+                                            if (child.nodeName == "v" || child.nodeName == "t") {
+                                                val rawV = child.textContent ?: ""
+                                                if (type == "s") {
+                                                    val idx = rawV.toIntOrNull() ?: -1
+                                                    if (idx in sharedStrings.indices) {
+                                                        valStr = sharedStrings[idx]
+                                                    }
+                                                } else {
+                                                    valStr = rawV
                                                 }
-                                            } else {
-                                                valStr = rawV
                                             }
                                         }
                                     }
-                                    rowValues.add(valStr)
+                                    if (colIdx >= 0) {
+                                        cellMap[colIdx] = valStr
+                                    }
                                 }
                             }
-                            if (rowValues.any { it.isNotBlank() }) {
-                                sheetRows.add(rowValues)
+
+                            if (cellMap.isNotEmpty()) {
+                                val maxCol = cellMap.keys.maxOrNull() ?: 0
+                                val rowValues = (0..maxCol).map { cellMap[it] ?: "" }
+                                if (rowValues.any { it.isNotBlank() }) {
+                                    sheetRows.add(rowValues)
+                                }
                             }
                         }
                         break

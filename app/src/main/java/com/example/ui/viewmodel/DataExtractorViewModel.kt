@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.model.ExtractionTask
 import com.example.data.model.RowStatus
+import com.example.data.model.SavedPreset
 import com.example.data.model.TaskRow
 import com.example.data.repository.TaskRepository
 import com.example.util.CsvExcelUtils
@@ -46,16 +47,27 @@ class DataExtractorViewModel(application: Application) : AndroidViewModel(applic
     val delayMillisInput = MutableStateFlow(200L)
     val concurrencyInput = MutableStateFlow(3)
 
+    val allPresets: StateFlow<List<SavedPreset>>
+
     init {
-        val dao = AppDatabase.getDatabase(application).taskDao()
-        repository = TaskRepository(dao)
+        val db = AppDatabase.getDatabase(application)
+        repository = TaskRepository(db.taskDao(), db.presetDao())
         allTasks = repository.allTasks.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+        allPresets = repository.allPresets.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
         isBatchRunning = repository.isBatchRunning
         currentActiveTaskId = repository.currentActiveTaskId
+
+        viewModelScope.launch {
+            repository.seedDefaultPresetsIfEmpty()
+        }
 
         // Auto select first task if available
         viewModelScope.launch {
@@ -64,6 +76,43 @@ class DataExtractorViewModel(application: Application) : AndroidViewModel(applic
                     _selectedTaskId.value = tasks.first().id
                 }
             }
+        }
+    }
+
+    fun saveCurrentConfigAsPreset(presetName: String) {
+        val name = presetName.trim()
+        if (name.isBlank()) {
+            _userMessage.value = "يرجى كتابة اسم للقالب الحفظ"
+            return
+        }
+
+        viewModelScope.launch {
+            val preset = SavedPreset(
+                presetName = name,
+                targetUrl = targetUrlInput.value.ifBlank { "https://emis.unrwa.org/Result/StudentsResult" },
+                requestMethod = requestMethodInput.value,
+                idParamKey = idParamInput.value.ifBlank { "IdNumber" },
+                yearParamKey = yearParamInput.value.ifBlank { "BirthYear" },
+                extractionFieldsCsv = extractionFieldsInput.value.ifBlank { "اسم الطالب,النتيجة,المعدل,الصف,المدرسة" }
+            )
+            repository.savePreset(preset)
+            _userMessage.value = "تم حفظ القالب بنجاح باسم: '$name'"
+        }
+    }
+
+    fun applyPreset(preset: SavedPreset) {
+        targetUrlInput.value = preset.targetUrl
+        requestMethodInput.value = preset.requestMethod
+        idParamInput.value = preset.idParamKey
+        yearParamInput.value = preset.yearParamKey
+        extractionFieldsInput.value = preset.extractionFieldsCsv
+        _userMessage.value = "تم تطبيق القالب المحفوظ: '${preset.presetName}'"
+    }
+
+    fun deletePreset(presetId: Long) {
+        viewModelScope.launch {
+            repository.deletePreset(presetId)
+            _userMessage.value = "تم حذف القالب المحفوظ"
         }
     }
 

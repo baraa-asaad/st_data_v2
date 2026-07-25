@@ -206,33 +206,64 @@ object BatchHttpEngine {
     }
 
     private fun extractFieldFromHtmlOrText(html: String, fieldName: String): String? {
-        try {
-            val quoted = Pattern.quote(fieldName)
+        val cleanFieldName = fieldName.trim()
+        if (cleanFieldName.isEmpty()) return null
 
-            // Pattern 1: <td>Label</td><td>Value</td> or <th>Label</th><td>Value</td>
-            val patternTd = Pattern.compile("(?i)(?:<td>|<th>|<span>|<div>|<label>)\\s*${quoted}\\s*[:\\?]?\\s*(?:</[^>]+>)*\\s*(?:<td[^>]*>|<span[^>]*>|<div[^>]*>|<p[^>]*>|<b[^>]*>)\\s*([^<]+)\\s*</", Pattern.CASE_INSENSITIVE)
-            val matcherTd = patternTd.matcher(html)
-            if (matcherTd.find()) {
-                val v = matcherTd.group(1)?.trim()
-                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
-            }
+        val variants = listOf(
+            cleanFieldName,
+            cleanFieldName.replace("اسم ", ""),
+            "اسم $cleanFieldName"
+        ).distinct()
 
-            // Pattern 2: Label: Value in plain text or tags
-            val patternKv = Pattern.compile("(?i)${quoted}\\s*[:=]\\s*[\"']?([^\"'<>\\n\\r]{1,100})[\"']?", Pattern.CASE_INSENSITIVE)
-            val matcherKv = patternKv.matcher(html)
-            if (matcherKv.find()) {
-                val v = matcherKv.group(1)?.trim()
-                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
-            }
+        for (variant in variants) {
+            try {
+                val quoted = Pattern.quote(variant)
 
-            // Pattern 3: Input field with matching name/id/placeholder
-            val patternInput = Pattern.compile("(?i)(?:name|id|placeholder)=[\"']?${quoted}[\"']?[^>]*value=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
-            val matcherInput = patternInput.matcher(html)
-            if (matcherInput.find()) {
-                val v = matcherInput.group(1)?.trim()
-                if (!v.isNull_or_blank()) return stripHtmlTags(v!!)
-            }
-        } catch (ignored: Exception) {}
+                // Pattern 1: Table row <tr> <th>/<td> Label </td> <td> Value </td> </tr>
+                val patternTr = Pattern.compile("(?i)<tr[^>]*>\\s*<(?:td|th)[^>]*>\\s*${quoted}\\s*[:\\?]?\\s*</(?:td|th)>\\s*<td[^>]*>([\\s\\S]{1,200}?)</td>", Pattern.CASE_INSENSITIVE)
+                val matcherTr = patternTr.matcher(html)
+                if (matcherTr.find()) {
+                    val raw = matcherTr.group(1)
+                    if (raw != null) {
+                        val v = stripHtmlTags(raw)
+                        if (v.isNotBlank()) return v
+                    }
+                }
+
+                // Pattern 2: <td>/<th>/<span>/<div>/<label> Label </...> <td/span/div/p/b> Value </...>
+                val patternTd = Pattern.compile("(?i)(?:<td[^>]*>|<th[^>]*>|<span[^>]*>|<div[^>]*>|<label[^>]*>)\\s*${quoted}\\s*[:\\?]?\\s*(?:</[^>]+>)*\\s*(?:<td[^>]*>|<span[^>]*>|<div[^>]*>|<p[^>]*>|<b[^>]*>|)(.*?)(?:</td>|</span>|</div>|</p>|</th>|<br>|<br/>|$)", Pattern.CASE_INSENSITIVE)
+                val matcherTd = patternTd.matcher(html)
+                if (matcherTd.find()) {
+                    val raw = matcherTd.group(1)
+                    if (raw != null) {
+                        val v = stripHtmlTags(raw)
+                        if (v.isNotBlank() && v != variant) return v
+                    }
+                }
+
+                // Pattern 3: Label: Value in plain text or tags
+                val patternKv = Pattern.compile("(?i)${quoted}\\s*[:=]\\s*[\"']?([^\"'<>\\n\\r]{1,100})[\"']?", Pattern.CASE_INSENSITIVE)
+                val matcherKv = patternKv.matcher(html)
+                if (matcherKv.find()) {
+                    val raw = matcherKv.group(1)
+                    if (raw != null) {
+                        val v = stripHtmlTags(raw)
+                        if (v.isNotBlank() && v != variant) return v
+                    }
+                }
+
+                // Pattern 4: Input field with matching name/id/placeholder
+                val patternInput = Pattern.compile("(?i)(?:name|id|placeholder)=[\"']?${quoted}[\"']?[^>]*value=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE)
+                val matcherInput = patternInput.matcher(html)
+                if (matcherInput.find()) {
+                    val raw = matcherInput.group(1)
+                    if (raw != null) {
+                        val v = stripHtmlTags(raw)
+                        if (v.isNotBlank()) return v
+                    }
+                }
+            } catch (ignored: Exception) {}
+        }
         return null
     }
 

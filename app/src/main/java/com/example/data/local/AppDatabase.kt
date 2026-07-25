@@ -5,11 +5,13 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.data.model.ExtractionTask
+import com.example.data.model.SavedPreset
 import com.example.data.model.TaskRow
 
-@Database(entities = [ExtractionTask::class, TaskRow::class], version = 1, exportSchema = false)
+@Database(entities = [ExtractionTask::class, TaskRow::class, SavedPreset::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
+    abstract fun presetDao(): PresetDao
 
     companion object {
         @Volatile

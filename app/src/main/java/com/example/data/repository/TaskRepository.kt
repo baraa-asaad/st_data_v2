@@ -1,8 +1,10 @@
 package com.example.data.repository
 
+import com.example.data.local.PresetDao
 import com.example.data.local.TaskDao
 import com.example.data.model.ExtractionTask
 import com.example.data.model.RowStatus
+import com.example.data.model.SavedPreset
 import com.example.data.model.TaskRow
 import com.example.network.BatchHttpEngine
 import kotlinx.coroutines.*
@@ -10,13 +12,52 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
 import org.json.JSONObject
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 
-class TaskRepository(private val taskDao: TaskDao) {
+class TaskRepository(
+    private val taskDao: TaskDao,
+    private val presetDao: PresetDao? = null
+) {
 
     val allTasks: Flow<List<ExtractionTask>> = taskDao.getAllTasks()
+    val allPresets: Flow<List<SavedPreset>> = presetDao?.getAllPresets() ?: flowOf(emptyList())
+
+    suspend fun savePreset(preset: SavedPreset): Long {
+        return presetDao?.insertPreset(preset) ?: -1L
+    }
+
+    suspend fun deletePreset(id: Long) {
+        presetDao?.deletePresetById(id)
+    }
+
+    suspend fun seedDefaultPresetsIfEmpty() {
+        if (presetDao == null) return
+        if (presetDao.getPresetCount() == 0) {
+            presetDao.insertPreset(
+                SavedPreset(
+                    presetName = "🎓 قالب أونروا (EMIS)",
+                    targetUrl = "https://emis.unrwa.org/Result/StudentsResult",
+                    requestMethod = "POST",
+                    idParamKey = "IdNumber",
+                    yearParamKey = "BirthYear",
+                    extractionFieldsCsv = "اسم الطالب,النتيجة,المعدل,الصف,اسم المدرسة"
+                )
+            )
+            presetDao.insertPreset(
+                SavedPreset(
+                    presetName = "🏫 قالب استعلام نتائج الشهادات العامة",
+                    targetUrl = "https://example.com/api/results",
+                    requestMethod = "POST",
+                    idParamKey = "id_number",
+                    yearParamKey = "birth_year",
+                    extractionFieldsCsv = "اسم الطالب,المعدل,النتيجة,المدرسة,رقم الجلوس"
+                )
+            )
+        }
+    }
 
     private val _isBatchRunning = MutableStateFlow(false)
     val isBatchRunning: StateFlow<Boolean> = _isBatchRunning.asStateFlow()

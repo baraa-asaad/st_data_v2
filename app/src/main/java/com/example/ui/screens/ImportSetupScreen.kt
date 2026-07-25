@@ -5,17 +5,21 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Web
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Web
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,8 +50,11 @@ fun ImportSetupScreen(
     val delayMillis by viewModel.delayMillisInput.collectAsState()
     val concurrency by viewModel.concurrencyInput.collectAsState()
 
+    val allPresets by viewModel.allPresets.collectAsState()
     var showInspectorDialog by remember { mutableStateOf(false) }
     var showPasteTextDialog by remember { mutableStateOf(false) }
+    var showSavePresetDialog by remember { mutableStateOf(false) }
+    var newPresetNameInput by remember { mutableStateOf("") }
     var pastedRawText by remember { mutableStateOf("") }
 
     // File picker launcher
@@ -160,19 +167,85 @@ fun ImportSetupScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "الإعدادات",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "2. إعدادات موقع الاستعلام والخانات",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "الإعدادات",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "2. إعدادات موقع الاستعلام والخانات",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    ElevatedButton(
+                        onClick = {
+                            newPresetNameInput = taskName.ifBlank { "قالب إعدادات جديد" }
+                            showSavePresetDialog = true
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Bookmark, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("حفظ كقالب جديد", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                // Saved Presets Row
+                if (allPresets.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "القوالب المحفوظة (المدخلات والمخرجات):",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                allPresets.forEach { preset ->
+                                    InputChip(
+                                        selected = targetUrl == preset.targetUrl && idParam == preset.idParamKey,
+                                        onClick = { viewModel.applyPreset(preset) },
+                                        label = { Text(preset.presetName, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                                        trailingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "حذف القالب",
+                                                modifier = Modifier
+                                                    .size(14.dp)
+                                                    .clickable { viewModel.deletePreset(preset.id) },
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 OutlinedTextField(
@@ -376,6 +449,51 @@ fun ImportSetupScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showPasteTextDialog = false }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+
+    // Save Preset Modal Dialog
+    if (showSavePresetDialog) {
+        AlertDialog(
+            onDismissRequest = { showSavePresetDialog = false },
+            title = {
+                Text("حفظ المدخلات والمخرجات كقالب جديد", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "قم بتسمية هذا القالب لتتمكن من إعادة استخدامه لاحقاً بنقرة واحدة (يتضمن الرابط ورابط الخانات والمخرجات):",
+                        fontSize = 12.sp
+                    )
+                    OutlinedTextField(
+                        value = newPresetNameInput,
+                        onValueChange = { newPresetNameInput = it },
+                        label = { Text("اسم القالب") },
+                        placeholder = { Text("مثال: نتائج مدرسة أونروا 2026") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (newPresetNameInput.isNotBlank()) {
+                            viewModel.saveCurrentConfigAsPreset(newPresetNameInput)
+                            showSavePresetDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("حفظ القالب الان", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showSavePresetDialog = false }) {
                     Text("إلغاء")
                 }
             }
