@@ -190,17 +190,23 @@ class DataExtractorViewModel(application: Application) : AndroidViewModel(applic
         _userMessage.value = "تم تحميل ${sample.rows.size} صفوف تجريبية بنجاح"
     }
 
-    fun loadPastedRows(rows: List<Map<String, String>>) {
-        val headers = listOf("رقم الهوية", "سنة الميلاد")
-        _parsedFileData.value = CsvExcelUtils.ParsedFileData(
-            headers = headers,
-            rows = rows,
-            fileName = "نص ملصق (${rows.size} طالب)"
-        )
-        idColumnInput.value = "رقم الهوية"
-        yearColumnInput.value = "سنة الميلاد"
-        taskNameInput.value = "فحص - نص ملصق (${rows.size} طالب)"
-        _userMessage.value = "تم استيراد ${rows.size} طالب بنجاح من النص الملصق"
+    fun loadPastedText(rawText: String) {
+        viewModelScope.launch {
+            val parsed = CsvExcelUtils.parsePastedText(rawText)
+            if (parsed != null && parsed.rows.isNotEmpty()) {
+                _parsedFileData.value = parsed
+                val headers = parsed.headers
+                val idHeader = headers.find { it.contains("هوية") || it.contains("id", ignoreCase = true) } ?: headers.firstOrNull() ?: "رقم الهوية"
+                val yearHeader = headers.find { it.contains("سنة") || it.contains("تاريخ") || it.contains("year", ignoreCase = true) } ?: headers.getOrNull(1) ?: "سنة الميلاد"
+                
+                idColumnInput.value = idHeader
+                yearColumnInput.value = yearHeader
+                taskNameInput.value = "فحص - نص ملصق (${parsed.rows.size} طالب)"
+                _userMessage.value = "تم استيراد ${parsed.rows.size} طالب بنجاح من النص الملصق"
+            } else {
+                _userMessage.value = "تعذر قراءة النص الملصق أو النص فارغ"
+            }
+        }
     }
 
     fun createAndStartTask() {

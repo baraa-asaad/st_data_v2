@@ -510,6 +510,30 @@ private fun getJsonValueNormalized(json: JSONObject, targetKey: String): String 
         }
     }
 
+    // 3. Normalized stripped key match (e.g. "اسم الطالب" vs "طالب" or "الاسم")
+    val strippedTarget = cleanTarget.replace("اسم ", "").replace("رقم ", "").replace("ال", "").trim()
+    if (strippedTarget.isNotBlank()) {
+        val keys3 = json.keys()
+        while (keys3.hasNext()) {
+            val k = keys3.next()
+            val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+            val strippedK = cleanK.replace("اسم ", "").replace("رقم ", "").replace("ال", "").trim()
+            if (strippedK.isNotBlank() && (strippedK == strippedTarget || strippedK.contains(strippedTarget) || strippedTarget.contains(strippedK))) {
+                val rawV = json.optString(k, "")
+                val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(rawV).trim()
+                if (cleanV.isNotBlank() && cleanV != "null") return cleanV
+            }
+        }
+    }
+
+    // 4. Single-key fallback if json only has 1 key
+    if (json.length() == 1) {
+        val soleKey = json.keys().next()
+        val rawV = json.optString(soleKey, "")
+        val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(rawV).trim()
+        if (cleanV.isNotBlank() && cleanV != "null") return cleanV
+    }
+
     return "-"
 }
 

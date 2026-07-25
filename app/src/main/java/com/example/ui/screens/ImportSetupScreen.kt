@@ -7,6 +7,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -138,7 +139,7 @@ fun ImportSetupScreen(
                     ) {
                         Column(
                             modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(
                                 text = "تم تحميل المصدر: ${data.fileName}",
@@ -146,10 +147,53 @@ fun ImportSetupScreen(
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                             Text(
-                                text = "عدد الطلاب: ${data.rows.size} طالب | الأعمدة: ${data.headers.joinToString(", ")}",
+                                text = "عدد الطلاب: ${data.rows.size} طالب | الأعمدة: ${data.headers.size} أعمدة (${data.headers.joinToString(", ")})",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
+
+                            // Live Table Preview (First 3 rows)
+                            if (data.rows.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState())
+                                            .padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        // Header Row
+                                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            data.headers.forEach { h ->
+                                                Text(
+                                                    text = h,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.widthIn(min = 90.dp)
+                                                )
+                                            }
+                                        }
+                                        Divider()
+                                        // Sample Rows (Up to 3)
+                                        data.rows.take(3).forEach { rowMap ->
+                                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                data.headers.forEach { h ->
+                                                    Text(
+                                                        text = rowMap[h] ?: "-",
+                                                        fontSize = 11.sp,
+                                                        modifier = Modifier.widthIn(min = 90.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -431,15 +475,7 @@ fun ImportSetupScreen(
                 Button(
                     onClick = {
                         if (pastedRawText.isNotBlank()) {
-                            // Parse pasted text into CsvExcelUtils.ParsedFileData
-                            val lines = pastedRawText.lines().map { it.trim() }.filter { it.isNotEmpty() }
-                            val sampleRows = lines.mapIndexed { idx, line ->
-                                val parts = line.split(Regex("[\t,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
-                                val id = parts.getOrNull(0) ?: ""
-                                val yr = parts.getOrNull(1) ?: "2006"
-                                mapOf("رقم الهوية" to id, "سنة الميلاد" to yr)
-                            }
-                            viewModel.loadPastedRows(sampleRows)
+                            viewModel.loadPastedText(pastedRawText)
                             showPasteTextDialog = false
                         }
                     }

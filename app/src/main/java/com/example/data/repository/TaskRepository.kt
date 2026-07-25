@@ -103,19 +103,49 @@ class TaskRepository(
         for ((k, v) in rowMap) {
             val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
             if (cleanK.equals(cleanTarget, ignoreCase = true)) {
-                return com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+                val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+                if (cleanV.isNotBlank()) return cleanV
             }
         }
 
         // 2. Contains match
         for ((k, v) in rowMap) {
             val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
-            if (cleanK.contains(cleanTarget, ignoreCase = true) || cleanTarget.contains(cleanK, ignoreCase = true)) {
-                return com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+            if (cleanK.isNotBlank() && (cleanK.contains(cleanTarget, ignoreCase = true) || cleanTarget.contains(cleanK, ignoreCase = true))) {
+                val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+                if (cleanV.isNotBlank()) return cleanV
             }
         }
 
-        // 3. Fallback by index
+        // 3. Keyword / Alias Match (ID vs Year)
+        val targetIsId = cleanTarget.contains("هوية") || cleanTarget.contains("جلوس") || cleanTarget.contains("id", ignoreCase = true)
+        val targetIsYear = cleanTarget.contains("سنة") || cleanTarget.contains("تاريخ") || cleanTarget.contains("year", ignoreCase = true)
+
+        for ((k, v) in rowMap) {
+            val cleanK = com.example.util.CsvExcelUtils.fixArabicMojibake(k).trim()
+            val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+            if (cleanV.isNotBlank()) {
+                if (targetIsId && (cleanK.contains("هوية") || cleanK.contains("جلوس") || cleanK.contains("id", ignoreCase = true))) {
+                    return cleanV
+                }
+                if (targetIsYear && (cleanK.contains("سنة") || cleanK.contains("تاريخ") || cleanK.contains("year", ignoreCase = true))) {
+                    return cleanV
+                }
+            }
+        }
+
+        // 4. Smart value scanning (if looking for ID, check for 7-10 digit number; if year, check for 4-digit 19xx/20xx)
+        for (v in rowMap.values) {
+            val cleanV = com.example.util.CsvExcelUtils.fixArabicMojibake(v).trim()
+            if (targetIsId && cleanV.matches(Regex("\\d{7,10}"))) {
+                return cleanV
+            }
+            if (targetIsYear && cleanV.matches(Regex("(19|20)\\d{2}"))) {
+                return cleanV
+            }
+        }
+
+        // 5. Fallback by index
         val values = rowMap.values.toList()
         val rawFallback = values.getOrNull(fallbackIdx) ?: values.firstOrNull() ?: ""
         return com.example.util.CsvExcelUtils.fixArabicMojibake(rawFallback).trim()
