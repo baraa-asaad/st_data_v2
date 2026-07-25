@@ -81,7 +81,8 @@ object BatchHttpEngine {
             val statusCode = response.code
 
             val responseBytes = response.body?.bytes() ?: byteArrayOf()
-            val bodyString = com.example.util.CsvExcelUtils.decodeBytesAutoEncoding(responseBytes)
+            val rawDecoded = com.example.util.CsvExcelUtils.decodeBytesAutoEncoding(responseBytes)
+            val bodyString = com.example.util.CsvExcelUtils.fixArabicMojibake(rawDecoded)
             val sampleBody = if (bodyString.length > 1200) bodyString.substring(0, 1200) + "..." else bodyString
 
             if (response.isSuccessful) {
@@ -120,9 +121,9 @@ object BatchHttpEngine {
 
     private fun parseResponseData(bodyString: String, expectedFieldsCsv: String): Map<String, String> {
         val resultMap = mutableMapOf<String, String>()
-        val fieldsList = expectedFieldsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val fieldsList = expectedFieldsCsv.split(",").map { com.example.util.CsvExcelUtils.fixArabicMojibake(it.trim()) }.filter { it.isNotEmpty() }
 
-        val cleanHtml = bodyString
+        val cleanHtml = com.example.util.CsvExcelUtils.fixArabicMojibake(bodyString)
             .replace("&nbsp;", " ")
             .replace("&amp;", "&")
             .replace("&lt;", "<")
@@ -137,7 +138,7 @@ object BatchHttpEngine {
                 fieldsList.forEach { field ->
                     val valNested = findInJsonObject(jsonObj, field)
                     if (valNested != null && valNested.isNotBlank()) {
-                        resultMap[field] = valNested
+                        resultMap[field] = com.example.util.CsvExcelUtils.fixArabicMojibake(valNested)
                     }
                 }
                 if (resultMap.isNotEmpty()) return resultMap
@@ -148,7 +149,7 @@ object BatchHttpEngine {
                     fieldsList.forEach { field ->
                         val valNested = findInJsonObject(jsonObj, field)
                         if (valNested != null && valNested.isNotBlank()) {
-                            resultMap[field] = valNested
+                            resultMap[field] = com.example.util.CsvExcelUtils.fixArabicMojibake(valNested)
                         }
                     }
                     if (resultMap.isNotEmpty()) return resultMap
@@ -156,33 +157,107 @@ object BatchHttpEngine {
             }
         } catch (ignored: Exception) {}
 
-        // 2. Parse HTML Table / Key-Value text
+        // 2. Extract all HTML table key-value pairs
+        val tablePairs = extractAllTablePairsFromHtml(cleanHtml)
+
+        // 3. Match configured fields against tablePairs or HTML regex
         fieldsList.forEach { field ->
-            val value = extractFieldFromHtmlOrText(cleanHtml, field)
-            if (value != null && value.isNotBlank()) {
-                resultMap[field] = value
+            var foundVal: String? = null
+            for ((k, v) in tablePairs) {
+                if (k.equals(field, ignoreCase = true) || k.contains(field, ignoreCase = true) || field.contains(k, ignoreCase = true)) {
+                    foundVal = v
+                    break
+                }
+            }
+            if (foundVal.isNull_or_blank()) {
+                foundVal = extractFieldFromHtmlOrText(cleanHtml, field)
+            }
+            if (!foundVal.isNull_or_blank()) {
+                resultMap[field] = com.example.util.CsvExcelUtils.fixArabicMojibake(foundVal!!)
             }
         }
 
-        // 3. Auto-detect common Arabic student labels if missing
+        // 4. Also include any remaining extracted table pairs
+        tablePairs.forEach { (k, v) ->
+            if (!resultMap.containsKey(k) && v.isNotBlank()) {
+                resultMap[k] = com.example.util.CsvExcelUtils.fixArabicMojibake(v)
+            }
+        }
+
+        // 5. Auto-detect common Arabic student labels if missing
         val autoLabels = listOf("اسم الطالب", "الاسم", "النتيجة", "المعدل", "الصف", "المدرسة", "رقم الجلوس")
         autoLabels.forEach { label ->
             if (!resultMap.containsKey(label)) {
                 val foundVal = extractFieldFromHtmlOrText(cleanHtml, label)
                 if (foundVal != null && foundVal.isNotBlank()) {
-                    resultMap[label] = foundVal
+                    resultMap[label] = com.example.util.CsvExcelUtils.fixArabicMojibake(foundVal)
                 }
             }
         }
 
-        // 4. Default fallback if no field matched: add clean text summary
+        // 6. Default fallback if no field matched: add clean text summary
         if (resultMap.isEmpty()) {
-            val cleanText = cleanHtml.replace(Regex("<[^>]*>"), " ").replace(Regex("\\s+"), " ").trim()
-            val summary = if (cleanText.length > 150) cleanText.substring(0, 150) + "..." else cleanText
-            resultMap["الملخص"] = if (summary.isNotBlank()) summary else "تمت الاستجابة بنجاح"
+            val cleanText = stripHtmlTags(cleanHtml)
+            val summary = if (cleanText.length > 200) cleanText.substring(0, 200) + "..." else cleanText
+            resultMap["الملخص"] = if (summary.isNotBlank()) com.example.util.CsvExcelUtils.fixArabicMojibake(summary) else "تمت الاستجابة بنجاح"
         }
 
         return resultMap
+    }
+
+    private fun extractAllTablePairsFromHtml(html: String): Map<String, String> {
+        val pairs = mutableMapOf<String, String>()
+        try {
+            val trPattern = Pattern.compile("(?i)<tr[^>]*>([\\s\\S]*?)</tr>")
+            val cellPattern = Pattern.compile("(?i)<(?:td|th)[^>]*>([\\s\\S]*?)</(?:td|th)>")
+            val trMatcher = trPattern.matcher(html)
+
+            val rows = mutableListOf<List<String>>()
+            while (trMatcher.find()) {
+                val trInner = trMatcher.group(1) ?: continue
+                val cellMatcher = cellPattern.matcher(trInner)
+                val rowCells = mutableListOf<String>()
+                while (cellMatcher.find()) {
+                    val raw = cellMatcher.group(1) ?: ""
+                    val clean = stripHtmlTags(raw)
+                    rowCells.add(clean)
+                }
+                if (rowCells.any { it.isNotBlank() }) {
+                    rows.add(rowCells)
+                }
+            }
+
+            for (row in rows) {
+                if (row.size == 2) {
+                    val k = com.example.util.CsvExcelUtils.fixArabicMojibake(row[0].removeSuffix(":").removeSuffix("=").trim())
+                    val v = com.example.util.CsvExcelUtils.fixArabicMojibake(row[1].trim())
+                    if (k.isNotBlank() && v.isNotBlank() && k.length <= 60 && k != v) {
+                        pairs[k] = v
+                    }
+                } else if (row.size == 3 && row[1].trim() in listOf(":", "=", "-")) {
+                    val k = com.example.util.CsvExcelUtils.fixArabicMojibake(row[0].trim())
+                    val v = com.example.util.CsvExcelUtils.fixArabicMojibake(row[2].trim())
+                    if (k.isNotBlank() && v.isNotBlank() && k.length <= 60) {
+                        pairs[k] = v
+                    }
+                }
+            }
+
+            if (rows.size >= 2) {
+                val headers = rows[0]
+                val firstDataRow = rows[1]
+                if (headers.size == firstDataRow.size && headers.size > 1) {
+                    headers.forEachIndexed { idx, rawH ->
+                        val k = com.example.util.CsvExcelUtils.fixArabicMojibake(rawH.trim())
+                        val v = com.example.util.CsvExcelUtils.fixArabicMojibake(firstDataRow.getOrNull(idx)?.trim() ?: "")
+                        if (k.isNotBlank() && v.isNotBlank() && k.length <= 60) {
+                            pairs[k] = v
+                        }
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
+        return pairs
     }
 
     private fun String?.isNull_or_blank(): Boolean {

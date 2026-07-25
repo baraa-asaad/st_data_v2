@@ -41,10 +41,62 @@ object CsvExcelUtils {
                 }
             }
 
-            val text = decodeBytesAutoEncoding(bytes)
+            val text = fixArabicMojibake(decodeBytesAutoEncoding(bytes))
+            if (text.contains("<table", ignoreCase = true) || text.contains("<tr", ignoreCase = true)) {
+                val parsedHtmlTable = parseHtmlTableToStructuredData(fileName, text)
+                if (parsedHtmlTable != null && parsedHtmlTable.rows.isNotEmpty()) {
+                    return parsedHtmlTable
+                }
+            }
             parseTextToStructuredData(fileName, text)
         } catch (e: Exception) {
             e.printStackTrace()
+            null
+        }
+    }
+
+    private fun parseHtmlTableToStructuredData(fileName: String, html: String): ParsedFileData? {
+        return try {
+            val cleanHtml = fixArabicMojibake(html)
+            val trPattern = java.util.regex.Pattern.compile("(?i)<tr[^>]*>([\\s\\S]*?)</tr>")
+            val cellPattern = java.util.regex.Pattern.compile("(?i)<(?:td|th)[^>]*>([\\s\\S]*?)</(?:td|th)>")
+            
+            val trMatcher = trPattern.matcher(cleanHtml)
+            val allRows = mutableListOf<List<String>>()
+
+            while (trMatcher.find()) {
+                val rowHtml = trMatcher.group(1) ?: continue
+                val cellMatcher = cellPattern.matcher(rowHtml)
+                val rowCells = mutableListOf<String>()
+                while (cellMatcher.find()) {
+                    val rawCell = cellMatcher.group(1) ?: ""
+                    val cleanCell = fixArabicMojibake(rawCell.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim())
+                    rowCells.add(cleanCell)
+                }
+                if (rowCells.any { it.isNotBlank() }) {
+                    allRows.add(rowCells)
+                }
+            }
+
+            if (allRows.isEmpty()) return null
+
+            val headers = allRows.first().map { fixArabicMojibake(it) }
+            val dataRows = mutableListOf<Map<String, String>>()
+
+            for (i in 1 until allRows.size) {
+                val cellList = allRows[i]
+                val map = mutableMapOf<String, String>()
+                headers.forEachIndexed { idx, h ->
+                    map[h] = fixArabicMojibake(cellList.getOrNull(idx) ?: "")
+                }
+                if (map.values.any { it.isNotBlank() }) {
+                    dataRows.add(map)
+                }
+            }
+
+            if (dataRows.isEmpty()) return null
+            ParsedFileData(fileName, headers, dataRows)
+        } catch (e: Exception) {
             null
         }
     }
@@ -175,16 +227,52 @@ object CsvExcelUtils {
         return parseTextToStructuredData(defaultFileName, rawText)
     }
 
+    fun fixArabicMojibake(text: String): String {
+        if (text.isBlank()) return text
+        if (containsArabicCharacters(text) && !isGarbledArabic(text)) {
+            return text
+        }
+
+        // Try ISO-8859-1 -> UTF-8
+        try {
+            val bytes = text.toByteArray(Charset.forName("ISO-8859-1"))
+            val recovered = String(bytes, Charsets.UTF_8)
+            if (containsArabicCharacters(recovered) && !isGarbledArabic(recovered)) {
+                return recovered
+            }
+        } catch (ignored: Exception) {}
+
+        // Try Windows-1252 -> UTF-8
+        try {
+            val bytes = text.toByteArray(Charset.forName("windows-1252"))
+            val recovered = String(bytes, Charsets.UTF_8)
+            if (containsArabicCharacters(recovered) && !isGarbledArabic(recovered)) {
+                return recovered
+            }
+        } catch (ignored: Exception) {}
+
+        // Try Windows-1256 -> UTF-8
+        try {
+            val bytes = text.toByteArray(Charset.forName("windows-1256"))
+            val recovered = String(bytes, Charsets.UTF_8)
+            if (containsArabicCharacters(recovered) && !isGarbledArabic(recovered)) {
+                return recovered
+            }
+        } catch (ignored: Exception) {}
+
+        return text
+    }
+
     fun decodeBytesAutoEncoding(bytes: ByteArray): String {
         // Check for BOMs
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
-            return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+            return fixArabicMojibake(String(bytes, 3, bytes.size - 3, Charsets.UTF_8))
         }
         if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
-            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+            return fixArabicMojibake(String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE))
         }
         if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-            return String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+            return fixArabicMojibake(String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE))
         }
 
         // Try standard UTF-8 first
@@ -195,26 +283,24 @@ object CsvExcelUtils {
             return utf8Text
         }
 
-        // If utf8 contains replacement characters or looks garbled, try Windows-1256 (standard Arabic Excel charset)
-        if (utf8Text.contains("\uFFFD") || isGarbledArabic(utf8Text) || !containsArabicCharacters(utf8Text)) {
-            try {
-                val win1256Charset = Charset.forName("windows-1256")
-                val winText = String(bytes, win1256Charset)
-                if (containsArabicCharacters(winText)) {
-                    return winText
-                }
-            } catch (ignored: Exception) {}
+        // Try Windows-1256 (standard Arabic Excel charset)
+        try {
+            val win1256Charset = Charset.forName("windows-1256")
+            val winText = String(bytes, win1256Charset)
+            if (containsArabicCharacters(winText)) {
+                return winText
+            }
+        } catch (ignored: Exception) {}
 
-            try {
-                val isoCharset = Charset.forName("ISO-8859-6")
-                val isoText = String(bytes, isoCharset)
-                if (containsArabicCharacters(isoText)) {
-                    return isoText
-                }
-            } catch (ignored: Exception) {}
-        }
+        try {
+            val isoCharset = Charset.forName("ISO-8859-6")
+            val isoText = String(bytes, isoCharset)
+            if (containsArabicCharacters(isoText)) {
+                return isoText
+            }
+        } catch (ignored: Exception) {}
 
-        return utf8Text
+        return fixArabicMojibake(utf8Text)
     }
 
     private fun containsArabicCharacters(text: String): Boolean {
@@ -373,7 +459,7 @@ object CsvExcelUtils {
 
                 val extractedJson = try { JSONObject(row.extractedDataJson) } catch (e: Exception) { JSONObject() }
                 allExtractedKeys.forEach { key ->
-                    lineTokens.add(extractedJson.optString(key, ""))
+                    lineTokens.add(getJsonValueNormalized(extractedJson, key))
                 }
 
                 lineTokens.add(row.httpStatusCode.toString())
@@ -393,10 +479,23 @@ object CsvExcelUtils {
         }
     }
 
+    private fun getJsonValueNormalized(json: JSONObject, targetKey: String): String {
+        val cleanTarget = targetKey.trim()
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (k.trim().equals(cleanTarget, ignoreCase = true)) {
+                return fixArabicMojibake(json.optString(k, "")).trim()
+            }
+        }
+        return ""
+    }
+
     private fun writeNativeXlsxZip(file: File, matrix: List<List<String>>) {
         val stringMap = LinkedHashMap<String, Int>()
         fun getStringIndex(str: String): Int {
-            return stringMap.computeIfAbsent(str) { stringMap.size }
+            val clean = fixArabicMojibake(str)
+            return stringMap.computeIfAbsent(clean) { stringMap.size }
         }
 
         matrix.forEach { row ->
